@@ -1,3 +1,4 @@
+
 const path = require("path");
 const fs = require("fs");
 const express = require("express");
@@ -8,15 +9,38 @@ const { pool } = require("../db");
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || "inseguro";
 
-// Función helper para simular latencia
-const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+// Función helper para simular latencia.
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Configuración de carga de archivos con límites de seguridad.
 const storage = multer.memoryStorage();
-const upload = multer({ storage });
+
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: 10 * 1024 * 1024, // Máximo 10 MB por archivo.
+    files: 1, // Solo un archivo.
+    fields: 30, // Máximo 30 campos de texto.
+    parts: 31, // Máximo 31 partes en total.
+    fieldNameSize: 100, // Máximo 100 bytes por nombre de campo.
+    fieldSize: 64 * 1024, // Máximo 64 KB por campo de texto.
+  },
+  fileFilter: (req, file, callback) => {
+    if (file.mimetype !== "application/pdf") {
+      return callback(new Error("Solo se permiten archivos PDF"));
+    }
+
+    callback(null, true);
+  },
+});
 
 function getUserFromAuthHeader(req) {
   const auth = req.headers.authorization || "";
-  if (!auth.startsWith("Bearer ")) return null;
+
+  if (!auth.startsWith("Bearer ")) {
+    return null;
+  }
+
   try {
     const token = auth.substring(7);
     return jwt.verify(token, JWT_SECRET);
@@ -25,7 +49,7 @@ function getUserFromAuthHeader(req) {
   }
 }
 
-// Crear contrato con archivo PDF (guardado en DB como bytea)
+// Crear contrato con archivo PDF guardado en la base de datos.
 router.post("/", upload.single("file"), async (req, res) => {
   const {
     cliente_id,
@@ -34,22 +58,28 @@ router.post("/", upload.single("file"), async (req, res) => {
     fecha_inicio,
     fecha_fin,
   } = req.body;
+
   try {
     const clientIdNum = Number(cliente_id);
+
     const contractInsert = await pool.query(
-      "INSERT INTO contratos (cliente_id, titulo, descripcion, fecha_inicio, fecha_fin) VALUES ($1, $2, $3, $4, $5) RETURNING *",
+      `INSERT INTO contratos
+       (cliente_id, titulo, descripcion, fecha_inicio, fecha_fin)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
       [clientIdNum, titulo, descripcion, fecha_inicio, fecha_fin]
     );
 
     if (req.file && req.file.buffer) {
       await pool.query(
-        "INSERT INTO documentos_contrato (contract_id, document) VALUES ($1, $2)",
+        `INSERT INTO documentos_contrato (contract_id, document)
+         VALUES ($1, $2)`,
         [contractInsert.rows[0].id, req.file.buffer]
       );
     }
 
-    const result = contractInsert;
     const authUser = getUserFromAuthHeader(req);
+
     await pool.query(
       "INSERT INTO auditoria (usuario_id, accion) VALUES ($1, $2)",
       [
@@ -58,7 +88,7 @@ router.post("/", upload.single("file"), async (req, res) => {
       ]
     );
 
-    res.status(201).json(result.rows[0]);
+    res.status(201).json(contractInsert.rows[0]);
   } catch (err) {
     console.error(err);
     res.status(500).json({
@@ -68,11 +98,11 @@ router.post("/", upload.single("file"), async (req, res) => {
   }
 });
 
-// Listar contratos
+// Listar contratos.
 router.get("/", async (req, res) => {
   try {
-    // Simular latencia de 4 segundos
     await delay(4000);
+
     const authUser = getUserFromAuthHeader(req);
 
     if (!authUser || !authUser.empresaId) {
@@ -81,24 +111,25 @@ router.get("/", async (req, res) => {
         glosa: "Token inválido o sin empresa asociada",
       });
     }
+
     const empresaId = authUser.empresaId;
+
     const result = await pool.query(
-      `
-      SELECT 
-        c.id, 
-        c.titulo, 
-        c.descripcion, 
-        c.fecha_inicio, 
-        c.fecha_fin, 
-        c.created_at,
-        cl.nombre AS cliente_nombre
-      FROM contratos c
-      INNER JOIN clientes cl ON cl.id = c.cliente_id
-      WHERE cl.empresa_id = $1
-      ORDER BY c.id DESC
-    `,
+      `SELECT
+         c.id,
+         c.titulo,
+         c.descripcion,
+         c.fecha_inicio,
+         c.fecha_fin,
+         c.created_at,
+         cl.nombre AS cliente_nombre
+       FROM contratos c
+       INNER JOIN clientes cl ON cl.id = c.cliente_id
+       WHERE cl.empresa_id = $1
+       ORDER BY c.id DESC`,
       [empresaId]
     );
+
     res.json(result.rows);
   } catch (err) {
     console.error(err);
@@ -109,12 +140,11 @@ router.get("/", async (req, res) => {
   }
 });
 
-// Servicio 1: Contratos por estado (por_vencer y vencido)
+// Contratos por vencer y vencidos.
 router.get("/estados", async (req, res) => {
   try {
     const authUser = getUserFromAuthHeader(req);
 
-    // Validar token y empresaId
     if (!authUser || !authUser.empresaId) {
       return res.status(401).json({
         error: "No autorizado",
@@ -124,37 +154,37 @@ router.get("/estados", async (req, res) => {
 
     const empresaId = authUser.empresaId;
     const hoy = new Date();
-    const hoyFormateado = hoy.toISOString().split("T")[0]; // YYYY-MM-DD
+    const hoyFormateado = hoy.toISOString().split("T")[0];
+
     const fecha30Dias = new Date(hoy);
     fecha30Dias.setDate(fecha30Dias.getDate() + 30);
     const fecha30DiasFormateada = fecha30Dias.toISOString().split("T")[0];
 
-    // Contratos por vencer (fecha_fin entre hoy y 30 días)
     const porVencer = await pool.query(
-      `SELECT c.id, c.cliente_id, c.titulo, c.descripcion, c.fecha_inicio, c.fecha_fin, c.created_at
+      `SELECT c.id, c.cliente_id, c.titulo, c.descripcion,
+              c.fecha_inicio, c.fecha_fin, c.created_at
        FROM contratos c
        INNER JOIN clientes cl ON cl.id = c.cliente_id
-       WHERE cl.empresa_id = $1 
-         AND c.fecha_fin >= $2 
+       WHERE cl.empresa_id = $1
+         AND c.fecha_fin >= $2
          AND c.fecha_fin <= $3
        ORDER BY c.fecha_fin ASC
        LIMIT 3`,
       [empresaId, hoyFormateado, fecha30DiasFormateada]
     );
 
-    // Contratos vencidos (fecha_fin ya pasó)
     const vencidos = await pool.query(
-      `SELECT c.id, c.cliente_id, c.titulo, c.descripcion, c.fecha_inicio, c.fecha_fin, c.created_at
+      `SELECT c.id, c.cliente_id, c.titulo, c.descripcion,
+              c.fecha_inicio, c.fecha_fin, c.created_at
        FROM contratos c
        INNER JOIN clientes cl ON cl.id = c.cliente_id
-       WHERE cl.empresa_id = $1 
+       WHERE cl.empresa_id = $1
          AND c.fecha_fin < $2
        ORDER BY c.fecha_fin DESC
        LIMIT 3`,
       [empresaId, hoyFormateado]
     );
 
-    // Agregar estado a cada contrato
     const porVencerConEstado = porVencer.rows.map((contrato) => ({
       ...contrato,
       estado: "por_vencer",
@@ -175,12 +205,11 @@ router.get("/estados", async (req, res) => {
   }
 });
 
-// Servicio 2: Dashboard con estadísticas de la empresa
+// Dashboard con estadísticas de la empresa.
 router.get("/dashboard", async (req, res) => {
   try {
     const authUser = getUserFromAuthHeader(req);
 
-    // Validar token y empresaId
     if (!authUser || !authUser.empresaId) {
       return res.status(401).json({
         error: "No autorizado",
@@ -192,7 +221,6 @@ router.get("/dashboard", async (req, res) => {
     const hoy = new Date();
     const hoyFormateado = hoy.toISOString().split("T")[0];
 
-    // Fechas para los próximos 7, 15 y 30 días
     const fecha7Dias = new Date(hoy);
     fecha7Dias.setDate(fecha7Dias.getDate() + 7);
     const fecha7DiasFormateada = fecha7Dias.toISOString().split("T")[0];
@@ -205,55 +233,65 @@ router.get("/dashboard", async (req, res) => {
     fecha30Dias.setDate(fecha30Dias.getDate() + 30);
     const fecha30DiasFormateada = fecha30Dias.toISOString().split("T")[0];
 
-    // Total de usuarios de la empresa
     const totalUsuariosResult = await pool.query(
-      "SELECT COUNT(*) as total FROM empresa_usuarios WHERE empresa_id = $1",
+      "SELECT COUNT(*) AS total FROM empresa_usuarios WHERE empresa_id = $1",
       [empresaId]
     );
-    const totalUsuarios = parseInt(totalUsuariosResult.rows[0].total);
+    const totalUsuarios = Number.parseInt(
+      totalUsuariosResult.rows[0].total,
+      10
+    );
 
-    // Total de clientes asociados a la empresa
     const totalClientesResult = await pool.query(
-      "SELECT COUNT(*) as total FROM clientes WHERE empresa_id = $1",
+      "SELECT COUNT(*) AS total FROM clientes WHERE empresa_id = $1",
       [empresaId]
     );
-    const totalClientes = parseInt(totalClientesResult.rows[0].total);
+    const totalClientes = Number.parseInt(
+      totalClientesResult.rows[0].total,
+      10
+    );
 
-    // Total de contratos que vencen en los próximos 7 días
     const contratos7DiasResult = await pool.query(
-      `SELECT COUNT(*) as total 
+      `SELECT COUNT(*) AS total
        FROM contratos c
        INNER JOIN clientes cl ON cl.id = c.cliente_id
-       WHERE cl.empresa_id = $1 
-         AND c.fecha_fin >= $2 
+       WHERE cl.empresa_id = $1
+         AND c.fecha_fin >= $2
          AND c.fecha_fin <= $3`,
       [empresaId, hoyFormateado, fecha7DiasFormateada]
     );
-    const contratos7Dias = parseInt(contratos7DiasResult.rows[0].total);
+    const contratos7Dias = Number.parseInt(
+      contratos7DiasResult.rows[0].total,
+      10
+    );
 
-    // Total de contratos que vencen en los próximos 15 días
     const contratos15DiasResult = await pool.query(
-      `SELECT COUNT(*) as total 
+      `SELECT COUNT(*) AS total
        FROM contratos c
        INNER JOIN clientes cl ON cl.id = c.cliente_id
-       WHERE cl.empresa_id = $1 
-         AND c.fecha_fin >= $2 
+       WHERE cl.empresa_id = $1
+         AND c.fecha_fin >= $2
          AND c.fecha_fin <= $3`,
       [empresaId, hoyFormateado, fecha15DiasFormateada]
     );
-    const contratos15Dias = parseInt(contratos15DiasResult.rows[0].total);
+    const contratos15Dias = Number.parseInt(
+      contratos15DiasResult.rows[0].total,
+      10
+    );
 
-    // Total de contratos que vencen en los próximos 30 días
     const contratos30DiasResult = await pool.query(
-      `SELECT COUNT(*) as total 
+      `SELECT COUNT(*) AS total
        FROM contratos c
        INNER JOIN clientes cl ON cl.id = c.cliente_id
-       WHERE cl.empresa_id = $1 
-         AND c.fecha_fin >= $2 
+       WHERE cl.empresa_id = $1
+         AND c.fecha_fin >= $2
          AND c.fecha_fin <= $3`,
       [empresaId, hoyFormateado, fecha30DiasFormateada]
     );
-    const contratos30Dias = parseInt(contratos30DiasResult.rows[0].total);
+    const contratos30Dias = Number.parseInt(
+      contratos30DiasResult.rows[0].total,
+      10
+    );
 
     res.json({
       totalUsuarios,
@@ -271,15 +309,21 @@ router.get("/dashboard", async (req, res) => {
   }
 });
 
-// Obtener contrato por id
+// Obtener contrato por ID.
 router.get("/:id", async (req, res) => {
   try {
     const result = await pool.query(
-      "SELECT id, cliente_id, titulo, descripcion, fecha_inicio, fecha_fin, created_at FROM contratos WHERE id=$1",
+      `SELECT id, cliente_id, titulo, descripcion,
+              fecha_inicio, fecha_fin, created_at
+       FROM contratos
+       WHERE id = $1`,
       [req.params.id]
     );
-    if (result.rows.length === 0)
+
+    if (result.rows.length === 0) {
       return res.status(404).json({ error: "No encontrado" });
+    }
+
     res.json(result.rows[0]);
   } catch (err) {
     console.error(err);
@@ -290,12 +334,11 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// Actualizar contrato
+// Actualizar contrato.
 router.put("/:id", upload.single("file"), async (req, res) => {
   try {
     const authUser = getUserFromAuthHeader(req);
 
-    // Validar token y empresaId
     if (!authUser || !authUser.empresaId) {
       return res.status(401).json({
         error: "No autorizado",
@@ -306,7 +349,6 @@ router.put("/:id", upload.single("file"), async (req, res) => {
     const empresaId = authUser.empresaId;
     const contratoId = req.params.id;
 
-    // Verificar que el contrato pertenezca a la empresa del token
     const contratoExistente = await pool.query(
       `SELECT c.id, c.cliente_id, c.titulo
        FROM contratos c
@@ -325,7 +367,6 @@ router.put("/:id", upload.single("file"), async (req, res) => {
     const { cliente_id, titulo, descripcion, fecha_inicio, fecha_fin } =
       req.body;
 
-    // Construir la consulta dinámicamente solo con los campos que se envían
     const updates = [];
     const values = [];
     let paramIndex = 1;
@@ -360,8 +401,7 @@ router.put("/:id", upload.single("file"), async (req, res) => {
       paramIndex++;
     }
 
-    // Si no hay campos para actualizar, retornar el contrato actual
-    if (updates.length === 0) {
+    if (updates.length === 0 && !req.file) {
       const contratoActual = await pool.query(
         "SELECT * FROM contratos WHERE id = $1",
         [contratoId]
@@ -369,26 +409,33 @@ router.put("/:id", upload.single("file"), async (req, res) => {
       return res.json(contratoActual.rows[0]);
     }
 
-    // Agregar el ID del contrato al final
-    values.push(contratoId);
-    const result = await pool.query(
-      `UPDATE contratos 
-       SET ${updates.join(", ")}
-       WHERE id = $${paramIndex}
-       RETURNING *`,
-      values
-    );
+    let result;
 
-    // Si se envía un nuevo archivo, actualizarlo
+    if (updates.length > 0) {
+      values.push(contratoId);
+
+      result = await pool.query(
+        `UPDATE contratos
+         SET ${updates.join(", ")}
+         WHERE id = $${paramIndex}
+         RETURNING *`,
+        values
+      );
+    } else {
+      result = await pool.query(
+        "SELECT * FROM contratos WHERE id = $1",
+        [contratoId]
+      );
+    }
+
     if (req.file && req.file.buffer) {
-      // Insertar nuevo documento (manteniendo el historial)
       await pool.query(
-        "INSERT INTO documentos_contrato (contract_id, document) VALUES ($1, $2)",
+        `INSERT INTO documentos_contrato (contract_id, document)
+         VALUES ($1, $2)`,
         [contratoId, req.file.buffer]
       );
     }
 
-    // Registrar en auditoría
     await pool.query(
       "INSERT INTO auditoria (usuario_id, accion) VALUES ($1, $2)",
       [
@@ -409,16 +456,26 @@ router.put("/:id", upload.single("file"), async (req, res) => {
   }
 });
 
-// Descargar/visualizar el último documento asociado al contrato
+// Descargar o visualizar el último documento del contrato.
 router.get("/:id/file", async (req, res) => {
   try {
     const doc = await pool.query(
-      "SELECT document FROM documentos_contrato WHERE contract_id=$1 ORDER BY id DESC LIMIT 1",
+      `SELECT document
+       FROM documentos_contrato
+       WHERE contract_id = $1
+       ORDER BY id DESC
+       LIMIT 1`,
       [req.params.id]
     );
-    if (doc.rows.length === 0)
-      return res.status(404).json({ error: "Documento no encontrado" });
+
+    if (doc.rows.length === 0) {
+      return res.status(404).json({
+        error: "Documento no encontrado",
+      });
+    }
+
     const buffer = doc.rows[0].document;
+
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", 'inline; filename="contrato.pdf"');
     res.send(buffer);
@@ -431,20 +488,25 @@ router.get("/:id/file", async (req, res) => {
   }
 });
 
-// Eliminar contrato y su archivo
+// Eliminar contrato y su archivo.
 router.delete("/:id", async (req, res) => {
   try {
-    await pool.query("DELETE FROM documentos_contrato WHERE contract_id=$1", [
-      req.params.id,
-    ]);
-    const result = await pool.query(
-      "DELETE FROM contratos WHERE id=$1 RETURNING *",
+    await pool.query(
+      "DELETE FROM documentos_contrato WHERE contract_id = $1",
       [req.params.id]
     );
-    if (result.rows.length === 0)
+
+    const result = await pool.query(
+      "DELETE FROM contratos WHERE id = $1 RETURNING *",
+      [req.params.id]
+    );
+
+    if (result.rows.length === 0) {
       return res.status(404).json({ error: "No encontrado" });
+    }
 
     const authUser = getUserFromAuthHeader(req);
+
     await pool.query(
       "INSERT INTO auditoria (usuario_id, accion) VALUES ($1, $2)",
       [
@@ -461,6 +523,47 @@ router.delete("/:id", async (req, res) => {
       glosa: err.message || err.toString(),
     });
   }
+});
+
+// Manejar errores de carga de archivos.
+router.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    if (err.code === "LIMIT_FILE_SIZE") {
+      return res.status(413).json({
+        error: "El archivo supera el límite permitido de 10 MB",
+      });
+    }
+
+    if (err.code === "LIMIT_FILE_COUNT") {
+      return res.status(400).json({
+        error: "Solo se permite un archivo por solicitud",
+      });
+    }
+
+    if (
+      err.code === "LIMIT_FIELD_COUNT" ||
+      err.code === "LIMIT_PART_COUNT" ||
+      err.code === "LIMIT_FIELD_KEY" ||
+      err.code === "LIMIT_FIELD_VALUE"
+    ) {
+      return res.status(400).json({
+        error: "La solicitud contiene demasiados campos o supera el tamaño permitido.",
+      });
+    }
+
+    return res.status(400).json({
+      error: "Error al cargar el archivo",
+      glosa: err.message,
+    });
+  }
+
+  if (err.message === "Solo se permiten archivos PDF") {
+    return res.status(400).json({
+      error: err.message,
+    });
+  }
+
+  next(err);
 });
 
 module.exports = router;

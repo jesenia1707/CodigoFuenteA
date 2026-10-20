@@ -38,7 +38,8 @@ function validarCliente(nombre, correo) {
     };
   }
 
-  const formatoCorreo = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  // Expresión simplificada para evitar retroceso excesivo.
+  const formatoCorreo = /^[^@\s]+@[^@\s.]+(?:\.[^@\s.]+)+$/;
 
   if (!formatoCorreo.test(correoLimpio)) {
     return {

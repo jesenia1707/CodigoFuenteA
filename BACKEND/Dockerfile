@@ -1,3 +1,4 @@
+
 FROM node:18-alpine
 
 WORKDIR /app
@@ -5,20 +6,22 @@ WORKDIR /app
 # Copiar archivos de dependencias
 COPY package*.json ./
 
-# Instalar dependencias
-RUN npm ci --only=production
+# Instalar dependencias de producción
+RUN npm ci --omit=dev
 
 # Copiar código de la aplicación
 COPY src/ ./src/
 COPY sql/ ./sql/
-COPY uploads/ ./uploads/
 
-# Crear directorio para uploads si no existe
-RUN mkdir -p uploads/contracts
+# Crear directorio de archivos y asignar permisos al usuario node
+RUN mkdir -p uploads/contracts \
+    && chown -R node:node /app
+
+# Ejecutar la aplicación sin privilegios de root
+USER node
 
 # Exponer puerto
-EXPOSE 3000
+EXPOSE 4000
 
 # Comando para iniciar la aplicación
 CMD ["node", "src/app.js"]
-
