@@ -1,3 +1,4 @@
+
 const path = require("path");
 const fs = require("fs");
 const express = require("express");
@@ -19,7 +20,13 @@ const metricasRoutes = require("./routes/metricas");
 
 const app = express();
 
-app.use(cors());
+// Configuración CORS: permite únicamente el frontend local de Atlas.
+app.use(cors({
+  origin: ["http://localhost:3350"],
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
+
 app.use(express.json());
 app.use(morgan("dev"));
 
@@ -38,6 +45,7 @@ app.use("/metricas", metricasRoutes);
 
 const openapi = require("./openapi.json");
 app.use("/docs", swaggerUi.serve, swaggerUi.setup(openapi));
+
 app.get("/openapi.json", (req, res) => {
   res.json(openapi);
 });
@@ -49,6 +57,7 @@ app.get("/", (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
+
 app.listen(PORT, () => {
   console.log(`Atlas API escuchando en puerto ${PORT}`);
 });
