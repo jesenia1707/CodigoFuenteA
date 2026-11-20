@@ -20,38 +20,27 @@ const metricasRoutes = require("./routes/metricas");
 
 const app = express();
 
-// Desactivar la exposición de la versión de Express.
+// Ocultar información tecnológica de Express.
 app.disable("x-powered-by");
 
-// Configurar los orígenes autorizados.
-const allowedOrigins = [
-  "http://localhost:3350",
-  "http://127.0.0.1:3350"
-];
+// Cabeceras de seguridad.
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("X-Permitted-Cross-Domain-Policies", "none");
+  next();
+});
 
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      // Permitir solicitudes sin Origin.
-      if (!origin || allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
+// Configuración CORS: permitir únicamente el frontend de Atlas.
+app.use(cors({
+  origin: "http://localhost:3350",
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  optionsSuccessStatus: 204
+}));
 
-      return callback(new Error("Origen no permitido por CORS"));
-    }
-  })
-);
-
-// Limitar el tamaño de las solicitudes HTTP.
-app.use(express.json({ limit: "1mb" }));
-
-app.use(
-  express.urlencoded({
-    extended: true,
-    limit: "1mb"
-  })
-);
-
+app.use(express.json());
 app.use(morgan("dev"));
 
 // Crear directorio para archivos de contratos.
